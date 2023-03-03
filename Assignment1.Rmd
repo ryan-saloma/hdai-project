@@ -1,0 +1,105 @@
+---
+title: "Assignment 1"
+output:
+  pdf_document: default
+  html_document: default
+date: '2023-02-27'
+author: "Ryan Saloma"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Question 1
+```{r,message = FALSE, warnings = FALSE}
+library(tidyverse)
+library(nycflights13)
+df1 <- flights
+
+# Bar plot to count the frequency
+ggplot(data=df1,mapping=aes(x=carrier))+
+  geom_bar()
+```
+Based on the graph, we could know that United Airlines flew the most flights out of NYC in 2013.
+
+## Question 2
+```{r,message = FALSE, warnings = FALSE}
+
+# Remove NAs
+# Create new variable, earlyArr (1 = early arrival, 0 = on-time/late arrival)
+# Group by destination
+# Calculate the proportion of flights that arrived early by destination
+# Calculate the median distance traveled by destination
+
+propEarlyArr <- df1 %>%
+  na.omit() %>%
+  mutate( earlyArr = ifelse( arr_delay < 0, 1, 0 ) )  %>%
+  group_by( dest ) %>%
+  summarize( prop_early = sum( earlyArr ) / n(), 
+             median_dist = median( distance ) )
+
+# Graph median distance traveled vs. proportion of early arrivals
+ggplot( propEarlyArr, mapping=aes( x = median_dist, y = prop_early ) ) + 
+  geom_point() +
+  geom_smooth() +
+  labs(
+    title = "Median Distance Traveled vs. Proportion of Flights that Arrived Early",
+    x = "Median Distance Traveled (in km)", 
+    y = "Proportion of Early Arrivals"
+  ) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+Based on the graph, we know that the relationship between median distance traveled and the proportion of early arrivals is not linear.  
+More specifically, it appears quadratic with the proportion of early arrivals reaching a minimum around 1500 miles. 
+
+## Question 3
+```{r,message = FALSE, warnings = FALSE}
+
+# Remove NAs
+# Create new variable, earlyArr (1 = early arrival, 0 = on-time/late arrival)
+# Group by carrier
+# Calculate the proportion of flights that arrived early by carrier
+# Plot proportion of flights that arrived early by carrier 
+
+df1 %>%
+  na.omit() %>%
+  mutate( earlyArr = ifelse( arr_delay < 0, 1, 0 ) ) %>%
+  group_by( carrier ) %>%
+  summarize( prop_early = sum( earlyArr ) / n() ) %>%
+  ungroup() %>%
+  ggplot(aes(x = carrier, y = prop_early)) +
+  geom_col() +
+  labs(
+    title = "Proportion of Flights That Arrived Early by Airline", 
+    x = "Airline", 
+    y = "Proportion of Early Arivals"
+    ) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+# Remove NAs
+# Filter out on-time and late arrivals
+# Group by carrier
+# Calculate the median of arr_delay
+# Reverse sign of median to increase readability
+# Plot th median of minutes before scheduled arrival by airline
+
+df1 %>%
+  na.omit() %>%
+  filter( arr_delay < 0 ) %>%
+  group_by( carrier ) %>%
+  summarize( median_arr = -median( arr_delay ) ) %>%
+  ungroup() %>%
+  ggplot(aes(x = carrier, y = median_arr)) +
+  geom_col() +
+  labs(
+    title = "Median Minutes Arrived Before Scheduled Arrival by Airline", 
+    x = "Airline", 
+    y = "Median Minutes Before Scheduled Arrival"
+    ) + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+Based on the graph, we know that Alaska Airlines (AS) has the biggest proportion of early arrivals. That is, Alaska Airlines flights are the most consistently ahead of schedule and arrive the most early. On the other hand, Airtran Airlines (FL) has the smallest proportion of early arrivals and FL flights arrive the least early.
