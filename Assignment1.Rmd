@@ -36,7 +36,7 @@ propEarlyArr <- df1 %>%
   na.omit() %>%
   mutate( earlyArr = ifelse( arr_delay < 0, 1, 0 ) )  %>%
   group_by( dest ) %>%
-  summarize( prop_early = sum( earlyArr ) / n(), 
+  summarize( prop_early = mean( earlyArr ), 
              median_dist = median( distance ) )
 
 # Graph median distance traveled vs. proportion of early arrivals
