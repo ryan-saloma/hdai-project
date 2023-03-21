@@ -1,0 +1,452 @@
+---
+title: "Assignment 2"
+author: "Ryan Saloma"
+date: "3/15/2023"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Assignment #2
+
+```{r Load packages}
+
+# Set up workspace
+
+# Import libraries
+library(tidyverse)
+library(gt)
+library(ggthemes)
+library(gridExtra)
+library(modelr)
+
+# Set working directory
+setwd("~/Desktop/temp/Micro-internship/week-4")
+
+```
+
+### Problem #1
+```{r Load Data, message = FALSE, warning=FALSE}
+
+# Import stroke data
+# Document issues with import
+col_types = "ifillfffddfl"
+stroke_df <- read_csv("healthcare-dataset-stroke-data.csv", col_types = col_types)
+problems <- problems(stroke_df)
+
+# Preview problems with import
+problems %>% distinct(col, expected, actual) %>% head(n = 10L)
+
+# Preview stroke data
+stroke_df %>% head(n = 10L)
+
+# Remove duplicate observations
+print(paste("The number of rows before removing duplicates", nrow(stroke_df)))
+stroke_df <- stroke_df %>% distinct()
+print(paste("The number of rows after removing duplicates", nrow(stroke_df)))
+
+# Check variables for incorrectly entered values
+stroke_df %>% select(gender) %>% distinct()
+stroke_df %>% select(ever_married) %>% distinct()
+stroke_df %>% select(work_type) %>% distinct()
+stroke_df %>% select(Residence_type) %>% distinct()
+stroke_df %>% select(smoking_status) %>% distinct()
+
+# Summarize data
+stroke_df %>%
+  str()
+
+```
+
+It looks like some of the values in the `age` and `bmi` columns were incorrectly entered or missing. These were replaced with `NA` by `read_csv`. The data set doesn't appear to contain duplicates. None of the factor variables appears to contain erroneous categories. The upper and lower bounds of every variable look reasonable with the exception of `bmi`. 97.60 is likely an error. Outliers will be removed next. 
+
+The variables of interest are `heart_disease`, `stroke`, and `hypertension`. In other words, we'll want to explore what variables predict those health conditions. We'll focus on stroke for now. We'll want to explore whether one or more of these medical conditions predicts another, e.g., hypertension predicting stroke. Other relevant variables include `gender`, `age`, `avg_glucose_level`, `bmi`, and `smoking_status`. We'll prioritize exploring the relationships among those aforementioned variables over those involving the demographic variables `Residence_type`, `work_type`, and `ever_married`. 
+
+```{r Variance, warning=FALSE}
+
+# First look at distributions of categorical variables of interest
+
+# Programmatically create plots of categorical variables
+plotSingleCategorical <- function(varName) {
+  stroke_df %>%
+  filter(!is.na(stroke_df[[varName]])) %>%
+  ggplot(aes_string(varName)) +
+  geom_bar() +
+  coord_flip() +
+  labs(
+    title = paste("Number of People by", reformatVarName(varName)), 
+    x = reformatVarName(varName)
+  ) 
+}
+
+# Fix column names for plot title and axis
+reformatVarName <- function(varName) { varName <- str_to_title(str_replace_all(varName, "_", " ")) }
+
+# Call plotSingleCategorical for chosen categorical variables
+cat_var <- c("heart_disease", "hypertension", "stroke", "gender", "smoking_status")
+list <- lapply(cat_var, plotSingleCategorical)
+catPlots <- do.call("grid.arrange", args = c(c(list), ncol = 2))
+
+# Save plots
+ggsave("categorical_plots.png", catPlots)
+
+
+# Now look at distributions of continuous variables
+
+# Programmatically create plots of continuous variables
+plotSingleContinuous <- function(varName) {
+  stroke_df %>%
+  filter(!is.na(stroke_df[[varName]])) %>%
+  ggplot(aes_string(varName)) +
+  geom_histogram(bins = 80) 
+}
+
+# Call plotSingleContinuous fo chosen continuous variables
+cont_var <- c("age", "bmi")
+listCont <- lapply(cont_var, plotSingleContinuous)
+contPlots <- do.call("grid.arrange", listCont)
+
+# Save plots
+ggsave("continuous_plots.png", contPlots)
+
+```
+
+Most people don't have heart disease or hypertension. Most people haven't had a stroke. Most subjects have never smoked or have an unknown smoking status. There are more females than males, and there's only one `Other`, which we'll want to change to `NA`. Age appears to skew slightly older. BMI is approximately normally distributed with a few outliers of `bmi > 45`. 
+
+```{r Remove Outliers}
+# Impute outliers with NA
+stroke_df_mod <- stroke_df %>%
+  mutate(bmi = ifelse(abs(bmi - mean(bmi, na.rm = TRUE)) > 2*sd(bmi, na.rm = TRUE), NA, bmi), 
+         avg_glucose_level = ifelse(abs(avg_glucose_level - mean(avg_glucose_level, na.rm = TRUE)) 
+                                    > 2*sd(avg_glucose_level, na.rm = TRUE), NA, avg_glucose_level), 
+         gender = ifelse(gender == "Other", NA, gender))
+```
+
+Observations where `bmi` or `avg_glucose_level` was greater than two standard deviations from the mean were imputed with `NA`. They'll be filtered out in future analyses. Original values maintained in `stroke_df`.
+
+```{r Covariance - Stroke}
+
+# Stroke
+
+# First look at relationships between stroke and other categorical variables
+
+# stroke and heart_disease
+stroke_by_hd <- stroke_df_mod %>%
+  filter(!is.na(heart_disease), !is.na(stroke)) %>%
+  group_by(heart_disease) %>%
+  summarise(count = n(), 
+            count_stroke = sum(stroke), 
+            prop_stroke = mean(stroke))
+
+stroke_by_hd %>% gt()
+
+prop_test_hd <- prop.test(stroke_by_hd$count_stroke, stroke_by_hd$count, alternative = "less", correct = FALSE)
+
+prop_test_hd
+
+plotStrokebyHD <- stroke_df_mod %>%
+  filter(!is.na(heart_disease), !is.na(stroke)) %>%
+  ggplot() + 
+  geom_bar(aes(x = stroke, y = ..prop.., fill = heart_disease, group = heart_disease), position = "dodge") +
+  labs(
+    title = "Prevalence of Stroke by Heart Disease", 
+    x = "Stroke", 
+    y = "Proportion"
+  ) +
+  theme_gdocs() +
+  theme(plot.title = element_text(size=16, hjust = 0.5)) +
+  scale_fill_manual("Heart Disease", values = c("FALSE" = "#44449f", "TRUE" = "#dca43c")) +
+  annotate("text", label = (paste("p-value: ", round(prop_test_hd$p.value, 23))), x = 2.3, y = 0.825, size = 3) +
+  ylim(0, 1)
+
+plotStrokebyHD
+
+ggsave("stroke_by_heart_disease.png", plotStrokebyHD, device = "png")
+
+
+# stroke and hypertension
+stroke_by_ht <- stroke_df_mod %>%
+  filter(!is.na(heart_disease), !is.na(hypertension)) %>%
+  group_by(hypertension) %>%
+  summarise(count = n(), 
+            count_stroke = sum(stroke), 
+            prop_stroke = mean(stroke))
+
+stroke_by_ht %>% gt()
+
+prop_test_ht <- prop.test(stroke_by_ht$count_stroke, stroke_by_ht$count, alternative = "less", correct = FALSE)
+
+prop_test_ht
+
+plotStrokebyHT <- stroke_df_mod %>%
+  filter(!is.na(hypertension), !is.na(stroke)) %>%
+  ggplot() + 
+  geom_bar(aes(x = stroke, y = ..prop.., fill = hypertension, group = hypertension), position = "dodge") +
+  labs(
+    title = "Prevalence of Stroke by Hypertension", 
+    x = "Stroke", 
+    y = "Proportion"
+  ) +
+  theme_gdocs() +
+  theme(plot.title = element_text(size=16, hjust = 0.5)) +
+  scale_fill_manual("Hypertension", values = c("FALSE" = "#44449f", "TRUE" = "#dca43c")) +
+  annotate("text", label = (paste("p-value: ", round(prop_test_ht$p.value, 23))), x = 2.3, y = 0.825, size = 3) +
+  ylim(0, 1)
+
+plotStrokebyHT
+
+ggsave("stroke_by_hypertension.png", plotStrokebyHT, device = "png")
+
+
+# stroke and gender plot
+stroke_df_mod %>%
+  filter(!is.na(stroke), !is.na(gender), gender != "Other") %>%
+  ggplot() + 
+  geom_bar(aes(x = heart_disease, y=..prop.., 
+               fill = gender, group = gender), position="dodge")
+
+
+# stroke and gender 
+stroke_by_gender <- stroke_df_mod %>%
+  filter(!is.na(stroke), !is.na(gender), gender != "Other") %>%
+  group_by(gender) %>%
+  summarise(count = n(), 
+            count_stroke = sum(stroke), 
+            prop_stroke = round(mean(stroke), 2)) %>%
+  ungroup() %>%
+  rename("Gender" = gender, 
+          "Number of People" = count, 
+         "Number of Stroke Pts" = count_stroke, 
+         "Proportion of Stroke Pts" = prop_stroke) 
+
+# output stroke and gender table
+stroke_by_gender %>% gt() %>% tab_header(title = "Proportion of Stroke Patients by Gender")
+
+# Is there a difference of age between genders (to acccount for stroke by gender results)?
+stroke_df_mod %>%
+  group_by(gender) %>%
+  summarise(median_age = median(age, na.rm = TRUE))
+
+# stroke and smoking status
+stroke_df_mod %>%
+  filter(!is.na(stroke), !is.na(smoking_status)) %>%
+  ggplot() + 
+  geom_bar(aes(x = heart_disease, y=..prop.., 
+               fill = smoking_status, group = smoking_status), position="dodge")
+
+# Now look at relationships between continuous variables
+
+plotTwoContinuous <- function(var1, var2) {
+  stroke_df_mod %>%
+  filter(!is.na(stroke_df_mod[[var1]]), !is.na(stroke_df_mod[[var2]])) %>%
+  ggplot(aes_string(x = var1, y = var2)) + 
+  geom_point(alpha = 0.1) +
+  geom_smooth()  +
+  labs(
+    title = paste(reformatVarName(var1), "by", reformatVarName(var2)), 
+    x = reformatVarName(var1), 
+    y = reformatVarName(var2)
+  ) +
+  theme(plot.title = element_text(hjust = 0.5))
+}
+
+# age and avg_glucose_level
+listTwoCont[[1]] <- plotTwoContinuous("age", "avg_glucose_level")
+
+# bmi and age
+listTwoCont[[2]] <- plotTwoContinuous("age", "bmi")
+
+# output plots of two continuous variables
+do.call("grid.arrange", listTwoCont)
+
+
+# Now look at relationships between stroke and continuous variables
+
+# stroke and age
+stroke_df_mod %>%
+  filter(!is.na(age), !is.na(stroke)) %>%
+  ggplot(aes(x = age, group = stroke, fill = stroke)) +
+  geom_histogram(aes(y = ..density..), binwidth = 1, alpha = 0.5, position="identity") 
+
+# stroke and avg_glucose_level
+stroke_df_mod %>%
+  filter(!is.na(avg_glucose_level), !is.na(stroke)) %>%
+  ggplot(aes(x = avg_glucose_level, group = stroke, fill = stroke)) +
+  geom_boxplot()
+
+# stroke and bmi
+stroke_df_mod %>%
+  filter(!is.na(bmi), !is.na(stroke)) %>%
+  ggplot(aes(x = bmi, group = stroke, fill = stroke)) +
+  geom_boxplot()
+
+# Get age range of stroke victims
+stroke_range_no_outliers <- stroke_df_mod %>%
+  filter(stroke == TRUE, !is.na(age)) %>%
+  filter(abs(age - mean(age, na.rm = TRUE)) < 2*sd(age, na.rm = TRUE)) %>%
+  summarize(range = range(age))
+
+# control for age
+stroke_control <- stroke_df_mod %>%
+  filter(age %in% seq(stroke_range_no_outliers$range[1], stroke_range_no_outliers$range[2], by = 1))
+
+# stroke and bmi, redux
+stroke_control %>%
+  filter(!is.na(bmi), !is.na(stroke)) %>%
+  ggplot(aes(x = bmi, group = stroke, fill = stroke)) +
+  geom_boxplot()
+
+```
+
+The proportion of people who've had a stroke is greater within the group of people with heart disease than the group of people without heart disease. The proportion of people who've had a stroke is greater within the group of people with hypertension than the group of people without hypertension. Stroke, hypertension, and heart disease appear to covary. Contrary to expectations, gender doesn't appear to be a factor in stroke risk. 
+
+Average glucose levels don't change with age, but BMI does. Therefore, we might want to control for age when looking at BMI and stroke. 
+
+People who have had a stroke tend to be older (> 40 years). Median average glucose levels and BMI are slightly higher in people who have had a stroke than people who haven't. However, when we control for age, the median BMI doesn't appear to be different between those who have had a stroke and those who haven't.  
+
+### Modeling Stroke Risk
+
+```{r}
+
+stroke <- resample_partition(stroke_df_mod,c(train = 0.8, test = 0.2)) 
+stroke_train <- as_tibble(stroke$train)
+
+
+```
+
+## Problem 2: Water Quality, Radium
+
+```{r, warning = FALSE}
+
+# Import Navajo Water Quality Dataset
+col_types <- "fc???fd?d?d?d?d?d?d?d?d?d?d?d?d?d?d?d?d?d?d?d?d?d?d?d?d?d?d?d?d?"
+# col_names <- c("epa_section", "water_source", "date_of_sampling", "long", "lat", "risk_rating", "amount_al", "exceedance_al", 
+#               "amount_sb", "exceedance_sb", "amount_as", "exceedance_as", )
+navajo_df <- read_csv("NavajoWaterExport.csv", col_types = col_types)
+unique(navajo_df$`Which EPA Section is This From?`)
+
+# Inspect df
+navajo_df %>% head(n = 10L)
+
+# Check for (and remove) duplicates
+print(paste("The number of rows before removing duplicates", nrow(navajo_df)))
+navajo_df <- navajo_df %>% distinct()
+print(paste("The number of rows after removing duplicates", nrow(navajo_df)))
+
+# Summarize data
+navajo_df %>%
+  summary()
+
+# Set EPA Section levels
+navajo_df$`Which EPA Section is This From?` = 
+  factor(navajo_df$`Which EPA Section is This From?`, 
+  levels = c("Section 2", "Section 3", "Section 4", "Section 5", "Section 6", "Section 7"))
+
+# Plot radium level by EPA Section
+navajo_df %>%
+  ggplot(aes(x = `Amount of Radium228` )) +
+  geom_histogram(bins = 40) +
+  facet_wrap(~`Which EPA Section is This From?`)
+
+# Look at Section 2
+navajo_df %>%
+  filter(`Which EPA Section is This From?` == "Section 2") %>%
+  select(`Amount of Radium228`) %>%
+  arrange(`Amount of Radium228`) %>%
+  head(n = 5L)
+
+```
+
+What's strange about the dataset is the existence of negative  Amount of Radium228` values. The documentation for this dataset explains that these values are a result of measurement error (i.e., overcorrection) and that they should be set to zero. 
+
+```{r, warning = FALSE}
+
+# Mutate water quality data
+navajo_df <- navajo_df %>%
+  mutate(`Amount of Radium228` = ifelse(`Amount of Radium228` < 0, 0, `Amount of Radium228`))
+
+# Check that erroneous values correctly imputed
+navajo_df %>%
+  filter(!is.na(`Amount of Radium228`)) %>%
+  ggplot(aes(x = `Amount of Radium228`)) +
+  geom_histogram(bins = 40) +
+  xlim(-5, 5)
+
+```
+
+## Problem 3: Water Quality, Uranium
+
+```{r, warning = FALSE}
+
+
+# Filter the dataset to remove any sites with "Unknown Risk" for the EPA risk rating
+# Count the number of sites of each EPA risk rating in each EPA section,
+# Calculate the mean concentration of Uranium-238 in the water samples for each EPA risk rating in each EPA section
+navajo_df_by_risk_section <- navajo_df %>%
+  filter(`US EPA Risk Rating` != "Unknown Risk") %>%
+  group_by(`US EPA Risk Rating`, `Which EPA Section is This From?`) %>%
+  summarise(count_sites = n(), 
+            mean_u238 = round(mean(`Amount of Uranium238`), 2))
+
+navajo_df_by_risk_section %>% gt()
+
+# Plot the number of sites at each EPA section using a bar plot
+plotSitesBySectionRisk <- navajo_df %>%
+  ggplot(aes(x = `Which EPA Section is This From?`, fill = `US EPA Risk Rating`)) +
+  geom_bar() +
+  labs(
+    title = "Number of Sites by EPA Section and Risk Rating", 
+    x = "EPA Section", 
+    y = "Count", 
+    fill = "Risk Rating"
+  ) +
+  theme(plot.title = element_text(hjust = 0.5, size = 10), 
+        axis.title = element_text(size = 10))
+
+# Plot the number of sites at each EPA section using a bar plot (position = "dodge")
+plotSitesBySectionRiskD <- navajo_df %>%
+  ggplot(aes(x = `Which EPA Section is This From?`, fill = `US EPA Risk Rating`)) +
+  geom_bar(position = "dodge") +
+  labs(
+    title = "Number of Sites by EPA Section and Risk Rating", 
+    x = "EPA Section", 
+    y = "Count", 
+    fill = "Risk Rating"
+  ) +
+  theme(plot.title = element_text(hjust = 0.5, size = 10), 
+        axis.title = element_text(size = 10))
+
+
+# Place plots side-by-side
+# CHECK THAT THIS OUTPUTS NICELY
+gridExtra::grid.arrange(plotSitesBySectionRisk, plotSitesBySectionRiskD, nrow = 1)
+
+
+# Plot the mean concentrations of Uranium-238 for each EPA section and risk rating
+
+navajo_df_by_risk_section %>%
+  ggplot(aes(x = `Which EPA Section is This From?`, fill = `US EPA Risk Rating`, group = `US EPA Risk Rating`)) +
+  geom_col(aes(y = mean_u238), position = "dodge") +
+  labs(
+    title = "Mean Amount of U238 by EPA Section and Risk Rating", 
+    x = "EPA Section", 
+    y = "Mean U238 Concentration", 
+    fill = "Risk Rating"
+  ) +
+  theme(plot.title = element_text(hjust = 0.5, size = 10), 
+        axis.title = element_text(size = 10))
+
+```
+
+Section 2 has the most sites with "More Risk". Additionally, the Section 2 sites that are at "More Risk" have the highest concentration of Uranium-238 on average. 
+
+# Problem 4
+```{r}
+
+
+
+
+
+```
